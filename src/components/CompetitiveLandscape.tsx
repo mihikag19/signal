@@ -1,50 +1,69 @@
-import { Users, Shield, Crown } from "lucide-react";
+import { motion } from "framer-motion";
+import { Shield, Users } from "lucide-react";
 
-interface CompetitiveLandscapeProps {
+function densityColor(d: string) {
+  if (d === "Low") return "text-success";
+  if (d === "Medium") return "text-warning";
+  return "text-destructive";
+}
+
+function densityBg(d: string) {
+  if (d === "Low") return "bg-success/10 border-success/20";
+  if (d === "Medium") return "bg-warning/10 border-warning/20";
+  return "bg-destructive/10 border-destructive/20";
+}
+
+interface Props {
   competitors: {
     direct: number;
     indirect: number;
     dominantPlayer: boolean;
-    dominantPlayerName?: string;
-    notes: string;
+    density: "Low" | "Medium" | "High";
+    interpretation: string;
+    names: string[];
   };
 }
 
-export function CompetitiveLandscape({ competitors }: CompetitiveLandscapeProps) {
+export function CompetitiveLandscape({ competitors }: Props) {
   return (
-    <div className="glass-card p-6">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-            <Users className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <p className="font-mono text-2xl font-bold text-foreground">{competitors.direct}</p>
-            <p className="text-sm text-muted-foreground">Direct competitors</p>
-          </div>
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4 }}
+      className="glass-card p-6 space-y-4"
+    >
+      <div className="flex flex-wrap gap-4">
+        <div className="flex items-center gap-2">
+          <Users className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm text-foreground">{competitors.direct} direct competitors</span>
         </div>
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center flex-shrink-0">
-            <Shield className="w-5 h-5 text-accent" />
-          </div>
-          <div>
-            <p className="font-mono text-2xl font-bold text-foreground">{competitors.indirect}</p>
-            <p className="text-sm text-muted-foreground">Indirect competitors</p>
-          </div>
+        <div className="flex items-center gap-2">
+          <Users className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm text-foreground">{competitors.indirect} indirect competitors</span>
         </div>
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
-            <Crown className="w-5 h-5 text-muted-foreground" />
-          </div>
-          <div>
-            <p className="font-mono text-2xl font-bold text-foreground">
-              {competitors.dominantPlayer ? "Yes" : "No"}
-            </p>
-            <p className="text-sm text-muted-foreground">Dominant player</p>
-          </div>
+        <div className="flex items-center gap-2">
+          <Shield className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm text-foreground">Dominant player: {competitors.dominantPlayer ? "Yes" : "No"}</span>
         </div>
       </div>
-      <p className="text-sm text-muted-foreground mt-5 leading-relaxed">{competitors.notes}</p>
-    </div>
+
+      <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-sm ${densityBg(competitors.density)}`}>
+        <span className={`font-semibold ${densityColor(competitors.density)}`}>
+          Competitive Density: {competitors.density}
+        </span>
+      </div>
+
+      <p className="text-sm text-muted-foreground">{competitors.interpretation}</p>
+
+      {competitors.names.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {competitors.names.map((name) => (
+            <span key={name} className="text-xs px-2.5 py-1 rounded-full bg-secondary text-muted-foreground">
+              {name}
+            </span>
+          ))}
+        </div>
+      )}
+    </motion.div>
   );
 }

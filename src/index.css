@@ -88,6 +88,11 @@
       active:scale-[0.98];
   }
 
+  .shimmer-button {
+    background-size: 200% 100%;
+    animation: shimmer 3s ease-in-out infinite;
+  }
+
   .gradient-border-left {
     border-left: 4px solid;
     border-image: linear-gradient(to bottom, hsl(239 84% 67%), hsl(258 90% 66%)) 1;
@@ -155,5 +160,10 @@
 
   .animate-signal-pulse {
     animation: signal-pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
   }
 }

@@ -1,45 +1,65 @@
 import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
 
-const statusMessages = [
-  "Scanning Reddit communities",
-  "Analyzing 2,400+ posts",
-  "Extracting demand signals",
-  "Scoring attention value",
-  "Building your report",
-];
+interface ScanningAnimationProps {
+  ideaText: string;
+  onComplete: () => void;
+}
 
-export function ScanningAnimation({ onComplete }: { onComplete: () => void }) {
+export function ScanningAnimation({ ideaText, onComplete }: ScanningAnimationProps) {
   const [messageIndex, setMessageIndex] = useState(0);
+  const preview = ideaText.length > 60 ? ideaText.slice(0, 57) + "..." : ideaText;
+
+  const statusMessages = [
+    `Scanning Reddit for signals about "${preview}"`,
+    "Analyzing 2,400+ posts and comments",
+    "Applying Mom Test framework",
+    "Scoring demand signals",
+    "Building your validation report",
+  ];
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setMessageIndex((prev) => {
-        if (prev >= statusMessages.length - 1) return prev;
-        return prev + 1;
-      });
+      setMessageIndex((prev) => (prev >= statusMessages.length - 1 ? prev : prev + 1));
     }, 800);
-
-    const timeout = setTimeout(onComplete, 4000);
+    const timeout = setTimeout(onComplete, 4200);
     return () => { clearInterval(interval); clearTimeout(timeout); };
-  }, [onComplete]);
+  }, [onComplete, statusMessages.length]);
 
   return (
     <div className="fixed inset-0 z-50 bg-background flex flex-col items-center justify-center">
+      {/* Idea being validated */}
+      <motion.p
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="text-muted-foreground text-sm italic mb-8 max-w-md text-center px-4"
+      >
+        "{preview}"
+      </motion.p>
+
       {/* Radar rings */}
       <div className="relative w-48 h-48 mb-12">
         {[0, 1, 2, 3].map((i) => (
-          <div
+          <motion.div
             key={i}
             className="absolute inset-0 rounded-full border border-primary/30"
-            style={{
-              animation: `pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite`,
-              animationDelay: `${i * 0.5}s`,
-            }}
+            animate={{ scale: [0.3, 2], opacity: [0.8, 0] }}
+            transition={{ duration: 2, delay: i * 0.5, repeat: Infinity, ease: [0.215, 0.61, 0.355, 1] }}
           />
         ))}
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="w-4 h-4 rounded-full gradient-primary animate-signal-pulse" />
         </div>
+      </div>
+
+      {/* Progress bar */}
+      <div className="w-64 h-1 bg-secondary rounded-full mb-6 overflow-hidden">
+        <motion.div
+          className="h-full gradient-primary rounded-full"
+          initial={{ width: "0%" }}
+          animate={{ width: "100%" }}
+          transition={{ duration: 4, ease: "linear" }}
+        />
       </div>
 
       {/* Status text */}
