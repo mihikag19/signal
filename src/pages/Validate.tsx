@@ -1,6 +1,7 @@
 import { useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, Clock } from "lucide-react";
+import { ArrowLeft, Clock, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
+import { useEffect, useState } from "react";
 import { SignalLogo } from "@/components/SignalLogo";
 import { ScoreHero } from "@/components/ScoreHero";
 import { ValidationQuadrantGrid } from "@/components/ValidationQuadrant";
@@ -12,7 +13,9 @@ import { CompetitiveLandscape } from "@/components/CompetitiveLandscape";
 import { ShouldYouBuild } from "@/components/ShouldYouBuild";
 import { NextStepsSection } from "@/components/NextSteps";
 import { ExportButtons } from "@/components/ExportButtons";
+import { validateIdea } from "@/lib/signalApi";
 import { getValidationReport } from "@/lib/mockData";
+import type { ValidationReport } from "@/lib/mockData";
 import { useCompareStore } from "@/lib/compareStore";
 
 function SectionLabel({ number, label }: { number: string; label: string }) {
@@ -24,11 +27,89 @@ function SectionLabel({ number, label }: { number: string; label: string }) {
   );
 }
 
+const LOADING_STEPS = [
+  "Scanning Reddit communities...",
+  "Searching Hacker News...",
+  "Extracting demand signals...",
+  "Running AI analysis with Claude...",
+  "Scoring founder & investor signals...",
+  "Building your validation report...",
+];
+
+function LoadingScreen({ idea }: { idea: string }) {
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setStep((s) => (s < LOADING_STEPS.length - 1 ? s + 1 : s));
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="max-w-md mx-auto text-center space-y-8 px-6">
+        <Loader2 className="w-12 h-12 text-primary animate-spin mx-auto" />
+        <div>
+          <h2 className="text-xl font-semibold text-foreground mb-2">Validating your idea</h2>
+          <p className="text-sm text-muted-foreground">"{idea}"</p>
+        </div>
+        <div className="space-y-3 text-left">
+          {LOADING_STEPS.map((label, i) => (
+            <div key={i} className={`flex items-center gap-3 text-sm transition-opacity duration-500 ${i <= step ? "opacity-100" : "opacity-30"}`}>
+              {i < step ? (
+                <span className="text-green-400 text-xs">✓</span>
+              ) : i === step ? (
+                <Loader2 className="w-3 h-3 text-primary animate-spin" />
+              ) : (
+                <span className="w-3 h-3" />
+              )}
+              <span className={i <= step ? "text-foreground" : "text-muted-foreground"}>{label}</span>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">This usually takes 20-40 seconds</p>
+      </div>
+    </div>
+  );
+}
+
 const Validate = () => {
   const [searchParams] = useSearchParams();
   const ideaText = searchParams.get("idea") || "";
-  const report = getValidationReport(ideaText);
   const { addIdea, hasIdea } = useCompareStore();
+
+  const [report, setReport] = useState<ValidationReport | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await validateIdea(ideaText);
+        if (!cancelled) setReport(result);
+      } catch (e) {
+        console.error("Validation failed, falling back to mock:", e);
+        // Fallback to mock data if real scraping fails
+        if (!cancelled) {
+          setReport(getValidationReport(ideaText));
+          setError("Live scraping unavailable — showing demo data. " + String(e));
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    if (ideaText) run();
+    return () => { cancelled = true; };
+  }, [ideaText]);
+
+  if (loading) return <LoadingScreen idea={ideaText} />;
+  if (!report) return <div className="min-h-screen bg-background flex items-center justify-center text-foreground">No report available.</div>;
+
   const isInCompare = hasIdea(report.ideaTitle);
 
   return (
@@ -46,9 +127,14 @@ const Validate = () => {
       </header>
 
       <main className="relative max-w-4xl mx-auto px-6 py-8 space-y-14">
-        <Link to="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
-          <ArrowLeft className="w-4 h-4" /> New validation
-        </Link>
+        <div className="flex items-center justify-between">
+          <Link to="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+            <ArrowLeft className="w-4 h-4" /> New validation
+          </Link>
+          {error && (
+            <span className="text-xs text-yellow-400 bg-yellow-400/10 px-3 py-1 rounded-full">Demo mode</span>
+          )}
+        </div>
 
         {/* Section 0: Hero Header */}
         <motion.section initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
@@ -59,7 +145,7 @@ const Validate = () => {
               <span key={p} className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">{p}</span>
             ))}
             <span className="text-xs px-2.5 py-1 rounded-full bg-secondary text-muted-foreground flex items-center gap-1">
-              <Clock className="w-3 h-3" /> Validated just now
+              <Clock className="w-3 h-3" /> {error ? "Demo data" : "Validated just now — real data"}
             </span>
           </div>
         </motion.section>
