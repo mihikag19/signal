@@ -9,7 +9,29 @@ import type {
   IHResponse,
   GitHubResponse,
   SOResponse,
+  GoogleTrendsResponse,
+  GoogleAutocompleteResponse,
+  WikipediaViewsResponse,
+  G2ReviewsResponse,
+  ChromeWebStoreResponse,
+  TrustpilotResponse,
+  AppStoreResponse,
+  YouTubeResponse,
+  MediumResponse,
+  SubstackResponse,
+  LobstersResponse,
+  LemmyResponse,
+  CrunchbaseResponse,
+  WellfoundResponse,
+  YCCompaniesResponse,
+  NpmStatsResponse,
+  PypiStatsResponse,
+  GitHubStarsResponse,
+  DataCoverageReport,
+  DataCoverageSource,
 } from "@/types";
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 async function callEdgeFunction(name: string, body: Record<string, unknown>) {
   const { data, error } = await supabase.functions.invoke(name, { body });
@@ -17,85 +39,198 @@ async function callEdgeFunction(name: string, body: Record<string, unknown>) {
   return data;
 }
 
-const EMPTY_REDDIT: RedditResponse = { posts: [], meta: { totalPosts: 0, growthVelocity: 0 } };
-const EMPTY_HN: HNResponse = { stories: [], comments: [], meta: { totalStories: 0, totalComments: 0 } };
-const EMPTY_PH: PHResponse = { posts: [], meta: { totalPosts: 0 } };
-const EMPTY_DEVTO: DevToResponse = { articles: [], meta: { totalArticles: 0 } };
-const EMPTY_IH: IHResponse = { posts: [], meta: { totalPosts: 0 } };
-const EMPTY_GH: GitHubResponse = { repos: [], issues: [], meta: { totalRepos: 0, totalIssues: 0 } };
-const EMPTY_SO: SOResponse = { questions: [], meta: { totalQuestions: 0 } };
+type CallStatus = "success" | "failed" | "timeout";
+
+interface SafeResult<T> {
+  data: T | null;
+  status: CallStatus;
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<SafeResult<T>> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ data: null, status: "timeout" }), ms);
+    promise.then(
+      (data) => { clearTimeout(timer); resolve({ data, status: "success" }); },
+      () => { clearTimeout(timer); resolve({ data: null, status: "failed" }); }
+    );
+  });
+}
+
+function safe<T>(name: string, body: Record<string, unknown>, ms = 15000) {
+  return withTimeout<T>(callEdgeFunction(name, body), ms);
+}
+
+function countItems(data: any, ...keys: string[]): number {
+  if (!data) return 0;
+  return keys.reduce((sum, key) => sum + (data[key]?.length ?? 0), 0);
+}
+
+function makeSource(name: string, result: SafeResult<any>, count: number): DataCoverageSource {
+  return { name, status: result.data?.error ? "failed" : result.status, itemCount: result.data?.error ? 0 : count };
+}
+
+function extract<T>(result: SafeResult<T>, fallback: T): T {
+  if (result.status !== "success" || !result.data || (result.data as any)?.error) return fallback;
+  return result.data;
+}
+
+// ── Fallbacks ────────────────────────────────────────────────────────────────
+
+const E_REDDIT: RedditResponse = { posts: [], meta: { totalPosts: 0, growthVelocity: 0 } };
+const E_HN: HNResponse = { stories: [], comments: [], meta: { totalStories: 0, totalComments: 0 } };
+const E_PH: PHResponse = { posts: [] };
+const E_DEVTO: DevToResponse = { articles: [] };
+const E_IH: IHResponse = { posts: [] };
+const E_GH: GitHubResponse = { repos: [], issues: [] };
+const E_SO: SOResponse = { questions: [] };
+const E_TRENDS: GoogleTrendsResponse = {};
+const E_AC: GoogleAutocompleteResponse = { suggestions: [], peopleAlsoAsk: [] };
+const E_WIKI: WikipediaViewsResponse = { articles: [] };
+const E_G2: G2ReviewsResponse = { products: [], complaints: [] };
+const E_CHROME: ChromeWebStoreResponse = { extensions: [] };
+const E_TP: TrustpilotResponse = { companies: [] };
+const E_AS: AppStoreResponse = { apps: [], negativeReviews: [] };
+const E_YT: YouTubeResponse = { videos: [] };
+const E_MED: MediumResponse = { articles: [] };
+const E_SUB: SubstackResponse = { posts: [] };
+const E_LOB: LobstersResponse = { stories: [] };
+const E_LEM: LemmyResponse = { posts: [] };
+const E_CB: CrunchbaseResponse = { companies: [] };
+const E_WF: WellfoundResponse = { companies: [] };
+const E_YC: YCCompaniesResponse = { companies: [] };
+const E_NPM: NpmStatsResponse = { packages: [] };
+const E_PYPI: PypiStatsResponse = { packages: [] };
+const E_GHS: GitHubStarsResponse = { repos: [] };
+
+// ── Main ─────────────────────────────────────────────────────────────────────
 
 export async function validateIdea(ideaText: string): Promise<ValidationReport> {
   const query = ideaText.trim();
 
-  const [redditResult, hnResult, phResult, devtoResult, ihResult, ghResult, soResult] =
-    await Promise.allSettled([
-      callEdgeFunction("scrape-reddit", { query }),
-      callEdgeFunction("scrape-hn", { query }),
-      callEdgeFunction("scrape-producthunt", { query }),
-      callEdgeFunction("scrape-devto", { query }),
-      callEdgeFunction("scrape-indiehackers", { query }),
-      callEdgeFunction("scrape-github", { query }),
-      callEdgeFunction("scrape-stackoverflow", { query }),
-    ]);
+  // Fire all scrapers in parallel — timeout each at 15s
+  const [
+    redditR, hnR, phR, devtoR, ihR, ghR, soR,
+    trendsR, acR, wikiR,
+    g2R, chromeR, tpR, asR,
+    ytR, medR, subR, lobR, lemR,
+    cbR, wfR, ycR,
+    npmR, pypiR, ghsR,
+  ] = await Promise.all([
+    // Tier 1 — most reliable
+    safe<RedditResponse>("scrape-reddit", { query }),
+    safe<HNResponse>("scrape-hn", { query }),
+    safe<PHResponse>("scrape-producthunt", { query }),
+    safe<DevToResponse>("scrape-devto", { query }),
+    safe<IHResponse>("scrape-indiehackers", { query }),
+    safe<GitHubResponse>("scrape-github", { query }),
+    safe<SOResponse>("scrape-stackoverflow", { query }),
+    // Tier 2 — trend + search signals
+    safe<GoogleTrendsResponse>("scrape-google-trends", { query }),
+    safe<GoogleAutocompleteResponse>("scrape-google-autocomplete", { query }),
+    safe<WikipediaViewsResponse>("scrape-wikipedia-views", { query }),
+    // Tier 2 — review platforms
+    safe<G2ReviewsResponse>("scrape-g2-reviews", { query }),
+    safe<ChromeWebStoreResponse>("scrape-chrome-webstore", { query }),
+    safe<TrustpilotResponse>("scrape-trustpilot", { query }),
+    safe<AppStoreResponse>("scrape-appstore", { query }),
+    // Tier 3 — content + community
+    safe<YouTubeResponse>("scrape-youtube", { query }),
+    safe<MediumResponse>("scrape-medium", { query }),
+    safe<SubstackResponse>("scrape-substack", { query }),
+    safe<LobstersResponse>("scrape-lobsters", { query }),
+    safe<LemmyResponse>("scrape-lemmy", { query }),
+    // Tier 3 — startup ecosystem
+    safe<CrunchbaseResponse>("scrape-crunchbase", { query }),
+    safe<WellfoundResponse>("scrape-wellfound", { query }),
+    safe<YCCompaniesResponse>("scrape-yc-companies", { query }),
+    // Tier 3 — developer signals
+    safe<NpmStatsResponse>("scrape-npm-stats", { query }),
+    safe<PypiStatsResponse>("scrape-pypi-stats", { query }),
+    safe<GitHubStarsResponse>("scrape-github-stars-history", { query }),
+  ]);
 
-  const logResult = (name: string, result: PromiseSettledResult<unknown>) => {
-    if (result.status === "rejected") {
-      console.warn(`[signal] ${name} failed:`, result.reason);
-    } else {
-      const d = result.value as Record<string, unknown>;
-      if (d?.error) console.warn(`[signal] ${name} returned error:`, d.error);
-    }
+  // Extract data with fallbacks
+  const reddit = extract(redditR, E_REDDIT);
+  const hn = extract(hnR, E_HN);
+  const ph = extract(phR, E_PH);
+  const devto = extract(devtoR, E_DEVTO);
+  const ih = extract(ihR, E_IH);
+  const gh = extract(ghR, E_GH);
+  const so = extract(soR, E_SO);
+  const trends = extract(trendsR, E_TRENDS);
+  const ac = extract(acR, E_AC);
+  const wiki = extract(wikiR, E_WIKI);
+  const g2 = extract(g2R, E_G2);
+  const chrome = extract(chromeR, E_CHROME);
+  const tp = extract(tpR, E_TP);
+  const appstore = extract(asR, E_AS);
+  const youtube = extract(ytR, E_YT);
+  const medium = extract(medR, E_MED);
+  const substack = extract(subR, E_SUB);
+  const lobsters = extract(lobR, E_LOB);
+  const lemmy = extract(lemR, E_LEM);
+  const crunchbase = extract(cbR, E_CB);
+  const wellfound = extract(wfR, E_WF);
+  const yc = extract(ycR, E_YC);
+  const npm = extract(npmR, E_NPM);
+  const pypi = extract(pypiR, E_PYPI);
+  const ghStars = extract(ghsR, E_GHS);
+
+  // Build coverage report
+  const sourceEntries: DataCoverageSource[] = [
+    makeSource("Reddit", redditR, countItems(reddit, "posts")),
+    makeSource("Hacker News", hnR, countItems(hn, "stories", "comments")),
+    makeSource("Product Hunt", phR, countItems(ph, "posts")),
+    makeSource("dev.to", devtoR, countItems(devto, "articles")),
+    makeSource("Indie Hackers", ihR, countItems(ih, "posts")),
+    makeSource("GitHub", ghR, countItems(gh, "repos", "issues")),
+    makeSource("Stack Overflow", soR, countItems(so, "questions")),
+    makeSource("Google Trends", trendsR, (trends.interestOverTime?.length ?? 0)),
+    makeSource("Google Autocomplete", acR, countItems(ac, "suggestions", "peopleAlsoAsk")),
+    makeSource("Wikipedia", wikiR, countItems(wiki, "articles")),
+    makeSource("G2 Reviews", g2R, countItems(g2, "products")),
+    makeSource("Chrome Web Store", chromeR, countItems(chrome, "extensions")),
+    makeSource("Trustpilot", tpR, countItems(tp, "companies")),
+    makeSource("App Store", asR, countItems(appstore, "apps")),
+    makeSource("YouTube", ytR, countItems(youtube, "videos")),
+    makeSource("Medium", medR, countItems(medium, "articles")),
+    makeSource("Substack", subR, countItems(substack, "posts")),
+    makeSource("Lobste.rs", lobR, countItems(lobsters, "stories")),
+    makeSource("Lemmy", lemR, countItems(lemmy, "posts")),
+    makeSource("Crunchbase", cbR, countItems(crunchbase, "companies")),
+    makeSource("Wellfound", wfR, countItems(wellfound, "companies")),
+    makeSource("YC Companies", ycR, countItems(yc, "companies")),
+    makeSource("npm", npmR, countItems(npm, "packages")),
+    makeSource("PyPI", pypiR, countItems(pypi, "packages")),
+    makeSource("GitHub Stars", ghsR, countItems(ghStars, "repos")),
+  ];
+
+  const totalItems = sourceEntries.reduce((acc, s) => acc + s.itemCount, 0);
+  const successfulSources = sourceEntries.filter((s) => s.status === "success").length;
+
+  const dataCoverage: DataCoverageReport = {
+    sources: sourceEntries,
+    totalItems,
+    totalSources: sourceEntries.length,
+    successfulSources,
   };
 
-  logResult("reddit", redditResult);
-  logResult("hn", hnResult);
-  logResult("producthunt", phResult);
-  logResult("devto", devtoResult);
-  logResult("indiehackers", ihResult);
-  logResult("github", ghResult);
-  logResult("stackoverflow", soResult);
+  // Log summary
+  const failed = sourceEntries.filter((s) => s.status === "failed").map((s) => s.name);
+  const timedOut = sourceEntries.filter((s) => s.status === "timeout").map((s) => s.name);
+  if (failed.length) console.warn("[signal] Failed sources:", failed.join(", "));
+  if (timedOut.length) console.warn("[signal] Timed out:", timedOut.join(", "));
+  console.info(`[signal] Coverage: ${successfulSources}/${sourceEntries.length} sources, ${totalItems} items`);
 
-  const reddit: RedditResponse =
-    redditResult.status === "fulfilled" && !redditResult.value?.error
-      ? redditResult.value
-      : EMPTY_REDDIT;
-  const hn: HNResponse =
-    hnResult.status === "fulfilled" && !hnResult.value?.error
-      ? hnResult.value
-      : EMPTY_HN;
-  const ph: PHResponse =
-    phResult.status === "fulfilled" && !phResult.value?.error
-      ? phResult.value
-      : EMPTY_PH;
-  const devto: DevToResponse =
-    devtoResult.status === "fulfilled" && !devtoResult.value?.error
-      ? devtoResult.value
-      : EMPTY_DEVTO;
-  const ih: IHResponse =
-    ihResult.status === "fulfilled" && !ihResult.value?.error
-      ? ihResult.value
-      : EMPTY_IH;
-  const gh: GitHubResponse =
-    ghResult.status === "fulfilled" && !ghResult.value?.error
-      ? ghResult.value
-      : EMPTY_GH;
-  const so: SOResponse =
-    soResult.status === "fulfilled" && !soResult.value?.error
-      ? soResult.value
-      : EMPTY_SO;
+  // Build active platform list
+  const activePlatforms: string[] = sourceEntries
+    .filter((s) => s.status === "success" && s.itemCount > 0)
+    .map((s) => s.name);
 
-  const activePlatforms: string[] = [];
-  if ((reddit.posts?.length ?? 0) > 0) activePlatforms.push("Reddit");
-  if ((hn.stories?.length ?? 0) > 0 || (hn.comments?.length ?? 0) > 0) activePlatforms.push("Hacker News");
-  if ((ph.posts?.length ?? 0) > 0) activePlatforms.push("Product Hunt");
-  if ((devto.articles?.length ?? 0) > 0) activePlatforms.push("dev.to");
-  if ((ih.posts?.length ?? 0) > 0) activePlatforms.push("Indie Hackers");
-  if ((gh.repos?.length ?? 0) > 0 || (gh.issues?.length ?? 0) > 0) activePlatforms.push("GitHub");
-  if ((so.questions?.length ?? 0) > 0) activePlatforms.push("Stack Overflow");
-
+  // Call analyze with everything
   const analysis: ClaudeAnalysis = await callEdgeFunction("analyze", {
     idea: ideaText,
+    // Wave 1
     redditPosts: reddit.posts ?? [],
     hnStories: hn.stories ?? [],
     hnComments: hn.comments ?? [],
@@ -105,17 +240,42 @@ export async function validateIdea(ideaText: string): Promise<ValidationReport> 
     githubRepos: gh.repos ?? [],
     githubIssues: gh.issues ?? [],
     soQuestions: so.questions ?? [],
+    // Wave 2
+    googleTrends: trends,
+    autocompleteSuggestions: ac.suggestions ?? [],
+    peopleAlsoAsk: ac.peopleAlsoAsk ?? [],
+    wikipediaArticles: wiki.articles ?? [],
+    g2Products: g2.products ?? [],
+    g2Complaints: g2.complaints ?? [],
+    chromeExtensions: chrome.extensions ?? [],
+    trustpilotCompanies: tp.companies ?? [],
+    appstoreApps: appstore.apps ?? [],
+    appstoreNegativeReviews: appstore.negativeReviews ?? [],
+    youtubeVideos: youtube.videos ?? [],
+    mediumArticles: medium.articles ?? [],
+    substackPosts: substack.posts ?? [],
+    lobstersStories: lobsters.stories ?? [],
+    lemmyPosts: lemmy.posts ?? [],
+    crunchbaseCompanies: crunchbase.companies ?? [],
+    wellfoundCompanies: wellfound.companies ?? [],
+    ycCompanies: yc.companies ?? [],
+    npmPackages: npm.packages ?? [],
+    pypiPackages: pypi.packages ?? [],
+    ghStarsRepos: ghStars.repos ?? [],
   });
 
-  return mapToValidationReport(ideaText, analysis, reddit, hn, activePlatforms);
+  return mapToValidationReport(ideaText, analysis, reddit, hn, activePlatforms, dataCoverage);
 }
+
+// ── Mapper ───────────────────────────────────────────────────────────────────
 
 function mapToValidationReport(
   ideaText: string,
   ai: ClaudeAnalysis,
   reddit: RedditResponse,
   hn: HNResponse,
-  activePlatforms: string[]
+  activePlatforms: string[],
+  dataCoverage: DataCoverageReport
 ): ValidationReport {
   const title = ideaText.length > 60 ? ideaText.slice(0, 57) + "..." : ideaText;
   const overall = ai.overallDemandScore ?? 50;
@@ -187,7 +347,7 @@ function mapToValidationReport(
       ? Math.round(posts.reduce((a, p) => a + (p.numComments ?? 0), 0) / posts.length)
       : 0;
 
-  const marketMetricsScore = Math.min(100, Math.max(10, Math.round((totalSignals / 80) * 100)));
+  const marketMetricsScore = Math.min(100, Math.max(10, Math.round((dataCoverage.totalItems / 150) * 100)));
 
   const rawGrowth = reddit.meta?.growthVelocity;
   const growthVelocity =
@@ -219,16 +379,8 @@ function mapToValidationReport(
         label: "Gut Check",
         score: Math.round((fs?.buildFeasibility ?? 5) * 10),
         metrics: [
-          {
-            label: "Problem clarity",
-            status: overall >= 60 ? "pass" : "partial",
-            detail: ai.recommendation?.slice(0, 80) ?? "Analysis pending",
-          },
-          {
-            label: "Founder fit",
-            status: (fs?.overall ?? 0) >= 7 ? "pass" : "partial",
-            detail: `Founder score: ${fs?.overall ?? "N/A"}/10`,
-          },
+          { label: "Problem clarity", status: overall >= 60 ? "pass" : "partial", detail: ai.recommendation?.slice(0, 80) ?? "Analysis pending" },
+          { label: "Founder fit", status: (fs?.overall ?? 0) >= 7 ? "pass" : "partial", detail: `Founder score: ${fs?.overall ?? "N/A"}/10` },
           { label: "Articulation", status: "pass", detail: "Can be explained concisely" },
         ],
       },
@@ -237,42 +389,18 @@ function mapToValidationReport(
         score: Math.round((fs?.painIntensity ?? 5) * 10),
         primary: true,
         metrics: [
-          {
-            label: "Unprompted pain",
-            status: quotes.length >= 4 ? "pass" : "partial",
-            detail: `${quotes.length} real quotes extracted`,
-          },
-          {
-            label: "Specific complaints",
-            status: quotes.length >= 3 ? "pass" : "partial",
-            detail: "Quotes from actual community discussions",
-          },
-          {
-            label: "Mom Test compliance",
-            status: overall >= 70 ? "pass" : "partial",
-            detail: `Based on ${totalSignals} scraped signals`,
-          },
+          { label: "Unprompted pain", status: quotes.length >= 4 ? "pass" : "partial", detail: `${quotes.length} real quotes extracted` },
+          { label: "Specific complaints", status: quotes.length >= 3 ? "pass" : "partial", detail: "Quotes from actual community discussions" },
+          { label: "Mom Test compliance", status: overall >= 70 ? "pass" : "partial", detail: `Based on ${dataCoverage.totalItems} scraped signals` },
         ],
       },
       internalQuant: {
         label: "Buildability",
         score: Math.round((fs?.buildFeasibility ?? 5) * 10),
         metrics: [
-          {
-            label: "Technical complexity",
-            status: (fs?.buildFeasibility ?? 0) >= 7 ? "pass" : "partial",
-            detail: `Feasibility: ${fs?.buildFeasibility ?? "N/A"}/10`,
-          },
-          {
-            label: "Time to MVP",
-            status: (fs?.buildFeasibility ?? 0) >= 6 ? "pass" : "partial",
-            detail: "Estimated based on technical requirements",
-          },
-          {
-            label: "Key dependencies",
-            status: "partial",
-            detail: "Standard APIs and services likely needed",
-          },
+          { label: "Technical complexity", status: (fs?.buildFeasibility ?? 0) >= 7 ? "pass" : "partial", detail: `Feasibility: ${fs?.buildFeasibility ?? "N/A"}/10` },
+          { label: "Time to MVP", status: (fs?.buildFeasibility ?? 0) >= 6 ? "pass" : "partial", detail: "Estimated based on technical requirements" },
+          { label: "Key dependencies", status: "partial", detail: "Standard APIs and services likely needed" },
         ],
       },
       externalQuant: {
@@ -280,21 +408,9 @@ function mapToValidationReport(
         score: marketMetricsScore,
         primary: true,
         metrics: [
-          {
-            label: "Signal volume",
-            status: totalSignals >= 20 ? "pass" : "partial",
-            detail: `${totalSignals} posts/comments scraped`,
-          },
-          {
-            label: "Avg engagement",
-            status: avgEngagement >= 50 ? "pass" : "partial",
-            detail: `${avgEngagement} avg upvotes`,
-          },
-          {
-            label: "Pay signals",
-            status: (fs?.willingnessToPay ?? 0) >= 6 ? "pass" : "partial",
-            detail: `WTP score: ${fs?.willingnessToPay ?? "N/A"}/10`,
-          },
+          { label: "Signal volume", status: dataCoverage.totalItems >= 30 ? "pass" : "partial", detail: `${dataCoverage.totalItems} items across ${dataCoverage.successfulSources} sources` },
+          { label: "Avg engagement", status: avgEngagement >= 50 ? "pass" : "partial", detail: `${avgEngagement} avg upvotes (Reddit)` },
+          { label: "Pay signals", status: (fs?.willingnessToPay ?? 0) >= 6 ? "pass" : "partial", detail: `WTP score: ${fs?.willingnessToPay ?? "N/A"}/10` },
         ],
       },
     },
@@ -302,41 +418,16 @@ function mapToValidationReport(
       score: Math.min(5, Math.round(overall / 20)),
       maxScore: 5,
       rules: [
-        {
-          rule: "Real conversations, not pitches",
-          status: quotes.length >= 2 ? "pass" : "partial",
-          evidence: "Signals sourced from organic Reddit and HN discussions",
-        },
-        {
-          rule: "Specific past behavior",
-          status: (fs?.painIntensity ?? 0) >= 7 ? "pass" : "partial",
-          evidence: "Analyzed for specificity of complaints and described workflows",
-        },
-        {
-          rule: "Active pain",
-          status: (fs?.urgency ?? 0) >= 6 ? "pass" : "partial",
-          evidence: `Urgency score: ${fs?.urgency ?? "N/A"}/10`,
-        },
-        {
-          rule: "Unprompted frustration",
-          status: overall >= 60 ? "pass" : "partial",
-          evidence: "Extracted from general discussion threads, not product pages",
-        },
-        {
-          rule: "Willingness to pay",
-          status:
-            (fs?.willingnessToPay ?? 0) >= 7
-              ? "pass"
-              : (fs?.willingnessToPay ?? 0) >= 5
-              ? "partial"
-              : "fail",
-          evidence: `WTP score: ${fs?.willingnessToPay ?? "N/A"}/10`,
-        },
+        { rule: "Real conversations, not pitches", status: quotes.length >= 2 ? "pass" : "partial", evidence: "Signals sourced from organic community discussions" },
+        { rule: "Specific past behavior", status: (fs?.painIntensity ?? 0) >= 7 ? "pass" : "partial", evidence: "Analyzed for specificity of complaints" },
+        { rule: "Active pain", status: (fs?.urgency ?? 0) >= 6 ? "pass" : "partial", evidence: `Urgency: ${fs?.urgency ?? "N/A"}/10` },
+        { rule: "Unprompted frustration", status: overall >= 60 ? "pass" : "partial", evidence: "Extracted from general discussion threads" },
+        { rule: "Willingness to pay", status: (fs?.willingnessToPay ?? 0) >= 7 ? "pass" : (fs?.willingnessToPay ?? 0) >= 5 ? "partial" : "fail", evidence: `WTP: ${fs?.willingnessToPay ?? "N/A"}/10` },
       ],
-      verdict: ai.recommendation ?? "Analysis complete. See quotes and scores for details.",
+      verdict: ai.recommendation ?? "Analysis complete.",
     },
     quantMetrics: {
-      totalSignals,
+      totalSignals: dataCoverage.totalItems,
       avgEngagement,
       avgComments,
       paySignals: Math.round((fs?.willingnessToPay ?? 3) * 2),
@@ -344,10 +435,7 @@ function mapToValidationReport(
       sourceBreakdown:
         sourceBreakdown.length > 0
           ? sourceBreakdown
-          : [
-              { source: "Reddit", pct: 70 },
-              { source: "Hacker News", pct: 30 },
-            ],
+          : [{ source: "Reddit", pct: 70 }, { source: "Hacker News", pct: 30 }],
       engagementDistribution: {
         above100: allScores.filter((s) => s >= 100).length,
         above50: allScores.filter((s) => s >= 50).length,
@@ -357,24 +445,11 @@ function mapToValidationReport(
     quotes:
       quotes.length > 0
         ? quotes
-        : [
-            {
-              text: "No strong quotes found — try a more specific idea description.",
-              platform: "System",
-              upvotes: 0,
-              date: "Now",
-              momTestTags: [],
-            },
-          ],
+        : [{ text: "No strong quotes found — try a more specific idea.", platform: "System", upvotes: 0, date: "Now", momTestTags: [] }],
     painCategories:
       painCategories.length > 0
         ? painCategories
-        : [
-            { label: "General frustration", pct: 40 },
-            { label: "Lack of solutions", pct: 30 },
-            { label: "Time cost", pct: 20 },
-            { label: "Other", pct: 10 },
-          ],
+        : [{ label: "General frustration", pct: 40 }, { label: "Lack of solutions", pct: 30 }, { label: "Time cost", pct: 20 }, { label: "Other", pct: 10 }],
     competitors: {
       direct: Math.min(competitors.length, 3),
       indirect: Math.max(competitors.length - 3, 0),
@@ -382,89 +457,34 @@ function mapToValidationReport(
       density: competitors.length >= 5 ? "High" : competitors.length >= 2 ? "Medium" : "Low",
       interpretation:
         competitors.length > 0
-          ? `${competitors.length} competitors identified. ${competitors
-              .map((c) => c.weakness ?? "")
-              .filter(Boolean)
-              .join(". ")}`
-          : "Limited competition detected — early market opportunity.",
+          ? `${competitors.length} competitors. ${competitors.map((c) => c.weakness ?? "").filter(Boolean).join(". ")}`
+          : "Limited competition detected.",
       names: competitorNames.slice(0, 5),
     },
     checklist: [
-      {
-        label: "Problem is real",
-        detail: `${quotes.length} real quotes from communities`,
-        status: quotes.length >= 3 ? "pass" : "warning",
-      },
-      {
-        label: "Demand is organic",
-        detail: `Scraped from ${activePlatforms.join(", ") || "Reddit and Hacker News"}`,
-        status: "pass",
-      },
-      {
-        label: "Market has room",
-        detail: `${competitors.length} competitors found`,
-        status: competitors.length <= 3 ? "pass" : "warning",
-      },
-      {
-        label: "Willingness to pay",
-        detail: `WTP score: ${fs?.willingnessToPay ?? "N/A"}/10`,
-        status:
-          (fs?.willingnessToPay ?? 0) >= 7
-            ? "pass"
-            : (fs?.willingnessToPay ?? 0) >= 5
-            ? "warning"
-            : "fail",
-      },
-      {
-        label: "Buildable",
-        detail: `Feasibility score: ${fs?.buildFeasibility ?? "N/A"}/10`,
-        status: (fs?.buildFeasibility ?? 0) >= 7 ? "pass" : "warning",
-      },
-      {
-        label: "Timing is right",
-        detail: `Urgency score: ${fs?.urgency ?? "N/A"}/10`,
-        status: (fs?.urgency ?? 0) >= 6 ? "pass" : "warning",
-      },
-      {
-        label: "Clear monetization",
-        detail: ai.revenueModel?.suggestedModel ?? ai.recommendation?.slice(0, 100) ?? "Needs exploration",
-        status: overall >= 70 ? "pass" : "fail",
-      },
+      { label: "Problem is real", detail: `${quotes.length} quotes from communities`, status: quotes.length >= 3 ? "pass" : "warning" },
+      { label: "Demand is organic", detail: `${dataCoverage.successfulSources} platforms scraped`, status: "pass" },
+      { label: "Market has room", detail: `${competitors.length} competitors found`, status: competitors.length <= 3 ? "pass" : "warning" },
+      { label: "Willingness to pay", detail: `WTP: ${fs?.willingnessToPay ?? "N/A"}/10`, status: (fs?.willingnessToPay ?? 0) >= 7 ? "pass" : (fs?.willingnessToPay ?? 0) >= 5 ? "warning" : "fail" },
+      { label: "Buildable", detail: `Feasibility: ${fs?.buildFeasibility ?? "N/A"}/10`, status: (fs?.buildFeasibility ?? 0) >= 7 ? "pass" : "warning" },
+      { label: "Timing is right", detail: `Urgency: ${fs?.urgency ?? "N/A"}/10`, status: (fs?.urgency ?? 0) >= 6 ? "pass" : "warning" },
+      { label: "Clear monetization", detail: ai.revenueModel?.suggestedModel ?? ai.recommendation?.slice(0, 100) ?? "Needs exploration", status: overall >= 70 ? "pass" : "fail" },
     ],
     checklistVerdict: {
       greenCount: [
-        quotes.length >= 3,
-        true,
-        competitors.length <= 3,
-        (fs?.willingnessToPay ?? 0) >= 7,
-        (fs?.buildFeasibility ?? 0) >= 7,
-        (fs?.urgency ?? 0) >= 6,
-        overall >= 70,
+        quotes.length >= 3, true, competitors.length <= 3,
+        (fs?.willingnessToPay ?? 0) >= 7, (fs?.buildFeasibility ?? 0) >= 7,
+        (fs?.urgency ?? 0) >= 6, overall >= 70,
       ].filter(Boolean).length,
       total: 7,
-      recommendation:
-        verdict === "BUILD"
-          ? "Strong go. Start building."
-          : verdict === "SKIP"
-          ? "Needs more research."
-          : "Promising. Proceed to user interviews.",
+      recommendation: verdict === "BUILD" ? "Strong go. Start building." : verdict === "SKIP" ? "Needs more research." : "Promising. Proceed to user interviews.",
       detail: ai.recommendation ?? "Complete analysis based on real community data.",
     },
-    nextSteps: (
-      ai.nextSteps ?? [
-        "Run Mom Test interviews",
-        "Test willingness to pay",
-        "Build minimal prototype",
-      ]
-    ).map((step, i) => ({
-      emoji: emojis[i] || "📋",
-      title: step.slice(0, 40),
-      detail: step,
-    })),
-    recommendation:
-      ai.recommendation ??
-      "Analysis complete. Review the scores and quotes above for detailed insights.",
-    // Pass through extended intelligence fields
+    nextSteps: (ai.nextSteps ?? ["Run Mom Test interviews", "Test willingness to pay", "Build minimal prototype"]).map(
+      (step, i) => ({ emoji: emojis[i] || "📋", title: step.slice(0, 40), detail: step })
+    ),
+    recommendation: ai.recommendation ?? "Analysis complete.",
+    // Extended fields
     attentionScore: ai.attentionScore,
     competitorMap: ai.competitorMap,
     revenueModel: ai.revenueModel,
@@ -472,5 +492,6 @@ function mapToValidationReport(
     buildRecommendations: ai.buildRecommendations,
     sentimentAnalysis: ai.sentimentAnalysis,
     confidenceScore: ai.confidenceScore,
+    dataCoverage,
   };
 }
