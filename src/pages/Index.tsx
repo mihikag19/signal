@@ -34,12 +34,6 @@ const Index = () => {
           >
             Compare
           </Link>
-          <Link
-            to="/teacher"
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Teacher
-          </Link>
         </div>
       </nav>
 

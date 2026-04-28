@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import type { ValidationReport } from "@/types";
-import { preloadedCompareIdeas } from "./mockData";
 
 interface CompareStore {
   ideas: ValidationReport[];
@@ -10,7 +9,7 @@ interface CompareStore {
 }
 
 export const useCompareStore = create<CompareStore>((set, get) => ({
-  ideas: [...preloadedCompareIdeas],
+  ideas: [],
   addIdea: (idea) => {
     if (get().ideas.length >= 3) return;
     if (get().ideas.some((i) => i.ideaTitle === idea.ideaTitle)) return;

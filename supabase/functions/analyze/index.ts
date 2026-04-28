@@ -1,26 +1,30 @@
 // supabase/functions/analyze/index.ts
-import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { idea, redditPosts, hnStories, hnComments } = await req.json();
+    const { idea, redditPosts, hnStories, hnComments, classMode } = await req.json();
     if (!idea) throw new Error("Missing idea");
 
-    // Build context from scraped data
+    // Build context from scraped data — 20 posts, 800 char body, inline topComments
     const redditContext = (redditPosts || [])
-      .slice(0, 40)
-      .map((p: any, i: number) =>
-        `[R${i}] r/${p.subreddit} | ↑${p.score} | ${p.numComments} comments\nTitle: ${p.title}\n${p.body?.slice(0, 400) || "(no body)"}`
-      )
+      .slice(0, 20)
+      .map((p: any, i: number) => {
+        let entry = `[R${i}] r/${p.subreddit} | ↑${p.score} | ${p.numComments} comments\nTitle: ${p.title}\n${p.body?.slice(0, 800) || "(no body)"}`;
+        // Include up to 3 top comments per post, 200 chars each
+        if (p.topComments?.length) {
+          const commentLines = p.topComments
+            .slice(0, 3)
+            .map((c: any, j: number) => `  [Comment ${j}] ↑${c.score} by ${c.author}: ${c.body?.slice(0, 200)}`)
+            .join("\n");
+          entry += `\nTop Comments:\n${commentLines}`;
+        }
+        return entry;
+      })
       .join("\n---\n");
 
     const hnStoriesContext = (hnStories || [])
@@ -37,6 +41,13 @@ serve(async (req) => {
       )
       .join("\n---\n");
 
+    const classModeSchema = classMode ? `
+  "teachingNotes": {
+    "momTestLesson": "what this idea's results teach about the Mom Test framework",
+    "commonMistake": "what assumption founders typically make that this data corrects",
+    "discussionQuestion": "one question an instructor could pose to a class about this result"
+  },` : "";
+
     const prompt = `You are Signal's demand validation engine. A user wants to validate this startup idea:
 
 "${idea}"
@@ -51,6 +62,14 @@ ${hnStoriesContext || "(no HN stories found)"}
 
 === HACKER NEWS COMMENTS ===
 ${hnCommentsContext || "(no HN comments found)"}
+
+PAY SIGNAL PHRASES — weight these heavily when scoring willingnessToPay:
+"I would pay", "I'd pay", "take my money", "been looking for this", "I need this",
+"why doesn't X exist", "I use [workaround] because", "costs me X hours", "we pay $X for"
+
+RED FLAG PHRASES — flag these and lower scores accordingly:
+"sounds cool", "interesting idea", "could be useful", "maybe someday",
+"not sure I'd use it", "too many of these already"
 
 Analyze this data and respond with ONLY valid JSON (no markdown, no backticks, no explanation):
 {
@@ -89,7 +108,14 @@ Analyze this data and respond with ONLY valid JSON (no markdown, no backticks, n
   ],
   "verdict": "BUILD or MAYBE or SKIP",
   "recommendation": "2-3 sentence strategic recommendation based on the evidence",
-  "nextSteps": ["actionable step 1", "actionable step 2", "actionable step 3"]
+  "nextSteps": ["actionable step 1", "actionable step 2", "actionable step 3"],
+  "redFlags": ["specific reason grounded in the data this idea might fail"],
+  "reasoning": {
+    "demandScore": "2 sentences explaining exactly what drove this number",
+    "founderScore": "what specifically supports or undermines buildability",
+    "investorScore": "what the data says about market size and timing"
+  },
+  "marketMaturity": "EMERGING | GROWING | SATURATED | UNKNOWN"${classModeSchema ? "," + classModeSchema : ""}
 }
 
 RULES:
@@ -98,7 +124,10 @@ RULES:
 - Pick the 4-6 most compelling quotes that show genuine pain or willingness to pay.
 - Pain categories should reflect what you actually see in the data.
 - overallDemandScore is 0-100. Most ideas should score 30-65. Only exceptional evidence gets 70+.
-- Be rigorous. Founders need honest signal, not false confidence.`;
+- Be rigorous. Founders need honest signal, not false confidence.
+- redFlags must be specific reasons grounded in the scraped data, not generic warnings.
+- reasoning fields must reference specific data points you analyzed.
+- marketMaturity must be exactly one of: EMERGING, GROWING, SATURATED, or UNKNOWN.`;
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
