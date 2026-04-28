@@ -1,33 +1,121 @@
 import { supabase } from "@/integrations/supabase/client";
-import type { ValidationReport, ClaudeAnalysis, RedditResponse, HNResponse } from "@/types";
+import type {
+  ValidationReport,
+  ClaudeAnalysis,
+  RedditResponse,
+  HNResponse,
+  PHResponse,
+  DevToResponse,
+  IHResponse,
+  GitHubResponse,
+  SOResponse,
+} from "@/types";
 
 async function callEdgeFunction(name: string, body: Record<string, unknown>) {
   const { data, error } = await supabase.functions.invoke(name, { body });
-  if (error) throw new Error(`Edge function ${name} failed: ${error.message}`);
+  if (error) throw new Error(`${name}: ${error.message}`);
   return data;
 }
 
-export async function validateIdea(ideaText: string): Promise<ValidationReport> {
-  const [redditData, hnData] = await Promise.all([
-    callEdgeFunction("scrape-reddit", { query: ideaText }),
-    callEdgeFunction("scrape-hn", { query: ideaText }),
-  ]);
+const EMPTY_REDDIT: RedditResponse = { posts: [], meta: { totalPosts: 0, growthVelocity: 0 } };
+const EMPTY_HN: HNResponse = { stories: [], comments: [], meta: { totalStories: 0, totalComments: 0 } };
+const EMPTY_PH: PHResponse = { posts: [], meta: { totalPosts: 0 } };
+const EMPTY_DEVTO: DevToResponse = { articles: [], meta: { totalArticles: 0 } };
+const EMPTY_IH: IHResponse = { posts: [], meta: { totalPosts: 0 } };
+const EMPTY_GH: GitHubResponse = { repos: [], issues: [], meta: { totalRepos: 0, totalIssues: 0 } };
+const EMPTY_SO: SOResponse = { questions: [], meta: { totalQuestions: 0 } };
 
-  const analysis = await callEdgeFunction("analyze", {
+export async function validateIdea(ideaText: string): Promise<ValidationReport> {
+  const query = ideaText.trim();
+
+  const [redditResult, hnResult, phResult, devtoResult, ihResult, ghResult, soResult] =
+    await Promise.allSettled([
+      callEdgeFunction("scrape-reddit", { query }),
+      callEdgeFunction("scrape-hn", { query }),
+      callEdgeFunction("scrape-producthunt", { query }),
+      callEdgeFunction("scrape-devto", { query }),
+      callEdgeFunction("scrape-indiehackers", { query }),
+      callEdgeFunction("scrape-github", { query }),
+      callEdgeFunction("scrape-stackoverflow", { query }),
+    ]);
+
+  const logResult = (name: string, result: PromiseSettledResult<unknown>) => {
+    if (result.status === "rejected") {
+      console.warn(`[signal] ${name} failed:`, result.reason);
+    } else {
+      const d = result.value as Record<string, unknown>;
+      if (d?.error) console.warn(`[signal] ${name} returned error:`, d.error);
+    }
+  };
+
+  logResult("reddit", redditResult);
+  logResult("hn", hnResult);
+  logResult("producthunt", phResult);
+  logResult("devto", devtoResult);
+  logResult("indiehackers", ihResult);
+  logResult("github", ghResult);
+  logResult("stackoverflow", soResult);
+
+  const reddit: RedditResponse =
+    redditResult.status === "fulfilled" && !redditResult.value?.error
+      ? redditResult.value
+      : EMPTY_REDDIT;
+  const hn: HNResponse =
+    hnResult.status === "fulfilled" && !hnResult.value?.error
+      ? hnResult.value
+      : EMPTY_HN;
+  const ph: PHResponse =
+    phResult.status === "fulfilled" && !phResult.value?.error
+      ? phResult.value
+      : EMPTY_PH;
+  const devto: DevToResponse =
+    devtoResult.status === "fulfilled" && !devtoResult.value?.error
+      ? devtoResult.value
+      : EMPTY_DEVTO;
+  const ih: IHResponse =
+    ihResult.status === "fulfilled" && !ihResult.value?.error
+      ? ihResult.value
+      : EMPTY_IH;
+  const gh: GitHubResponse =
+    ghResult.status === "fulfilled" && !ghResult.value?.error
+      ? ghResult.value
+      : EMPTY_GH;
+  const so: SOResponse =
+    soResult.status === "fulfilled" && !soResult.value?.error
+      ? soResult.value
+      : EMPTY_SO;
+
+  const activePlatforms: string[] = [];
+  if ((reddit.posts?.length ?? 0) > 0) activePlatforms.push("Reddit");
+  if ((hn.stories?.length ?? 0) > 0 || (hn.comments?.length ?? 0) > 0) activePlatforms.push("Hacker News");
+  if ((ph.posts?.length ?? 0) > 0) activePlatforms.push("Product Hunt");
+  if ((devto.articles?.length ?? 0) > 0) activePlatforms.push("dev.to");
+  if ((ih.posts?.length ?? 0) > 0) activePlatforms.push("Indie Hackers");
+  if ((gh.repos?.length ?? 0) > 0 || (gh.issues?.length ?? 0) > 0) activePlatforms.push("GitHub");
+  if ((so.questions?.length ?? 0) > 0) activePlatforms.push("Stack Overflow");
+
+  const analysis: ClaudeAnalysis = await callEdgeFunction("analyze", {
     idea: ideaText,
-    redditPosts: redditData.posts || [],
-    hnStories: hnData.stories || [],
-    hnComments: hnData.comments || [],
+    redditPosts: reddit.posts ?? [],
+    hnStories: hn.stories ?? [],
+    hnComments: hn.comments ?? [],
+    phPosts: ph.posts ?? [],
+    devtoArticles: devto.articles ?? [],
+    ihPosts: ih.posts ?? [],
+    githubRepos: gh.repos ?? [],
+    githubIssues: gh.issues ?? [],
+    soQuestions: so.questions ?? [],
   });
 
-  return mapToValidationReport(ideaText, analysis, redditData, hnData);
+  return mapToValidationReport(ideaText, analysis, reddit, hn, activePlatforms);
 }
 
 function mapToValidationReport(
   ideaText: string,
   ai: ClaudeAnalysis,
   reddit: RedditResponse,
-  hn: HNResponse
+  hn: HNResponse,
+  activePlatforms: string[]
 ): ValidationReport {
   const title = ideaText.length > 60 ? ideaText.slice(0, 57) + "..." : ideaText;
   const overall = ai.overallDemandScore ?? 50;
@@ -44,7 +132,9 @@ function mapToValidationReport(
       ? `r/${q.subreddit}`
       : q.source === "hackernews"
       ? "Hacker News"
-      : q.source ?? "Reddit",
+      : q.source
+      ? q.source.charAt(0).toUpperCase() + q.source.slice(1)
+      : "Reddit",
     upvotes: q.score ?? 0,
     date: "Recent",
     momTestTags: ["Real data"],
@@ -97,10 +187,8 @@ function mapToValidationReport(
       ? Math.round(posts.reduce((a, p) => a + (p.numComments ?? 0), 0) / posts.length)
       : 0;
 
-  // Normalize signal count to 0–100: 80 signals = full score, floor of 10
   const marketMetricsScore = Math.min(100, Math.max(10, Math.round((totalSignals / 80) * 100)));
 
-  // Use real growth velocity from the scraper; fall back to "+0%" if unavailable
   const rawGrowth = reddit.meta?.growthVelocity;
   const growthVelocity =
     rawGrowth != null ? (rawGrowth >= 0 ? `+${rawGrowth}%` : `${rawGrowth}%`) : "+0%";
@@ -125,7 +213,7 @@ function mapToValidationReport(
         : "Investor signal needs further data.",
     },
     verdict: verdictText,
-    platforms: ["Reddit", "Hacker News"],
+    platforms: activePlatforms.length > 0 ? activePlatforms : ["Reddit", "Hacker News"],
     quadrants: {
       internalQual: {
         label: "Gut Check",
@@ -309,7 +397,7 @@ function mapToValidationReport(
       },
       {
         label: "Demand is organic",
-        detail: "Scraped from Reddit and Hacker News discussions",
+        detail: `Scraped from ${activePlatforms.join(", ") || "Reddit and Hacker News"}`,
         status: "pass",
       },
       {
@@ -339,7 +427,7 @@ function mapToValidationReport(
       },
       {
         label: "Clear monetization",
-        detail: ai.recommendation?.slice(0, 100) ?? "Needs exploration",
+        detail: ai.revenueModel?.suggestedModel ?? ai.recommendation?.slice(0, 100) ?? "Needs exploration",
         status: overall >= 70 ? "pass" : "fail",
       },
     ],
@@ -376,5 +464,13 @@ function mapToValidationReport(
     recommendation:
       ai.recommendation ??
       "Analysis complete. Review the scores and quotes above for detailed insights.",
+    // Pass through extended intelligence fields
+    attentionScore: ai.attentionScore,
+    competitorMap: ai.competitorMap,
+    revenueModel: ai.revenueModel,
+    targetPersonas: ai.targetPersonas,
+    buildRecommendations: ai.buildRecommendations,
+    sentimentAnalysis: ai.sentimentAnalysis,
+    confidenceScore: ai.confidenceScore,
   };
 }

@@ -7,11 +7,44 @@ const DEFAULT_SUBREDDITS = [
   "ProductManagement", "SideProject"
 ];
 
-const USER_AGENT = "Signal/1.0 (market research tool)";
+const USER_AGENT = "Signal/1.0 by signal-app";
 
-async function fetchSubreddit(sub: string, query: string, seen: Set<string>): Promise<any[]> {
-  const url = `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&limit=25&sort=relevance&t=year`;
-  const res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
+async function getRedditToken(): Promise<string> {
+  const clientId = Deno.env.get("REDDIT_CLIENT_ID");
+  const clientSecret = Deno.env.get("REDDIT_CLIENT_SECRET");
+  if (!clientId || !clientSecret) throw new Error("Missing REDDIT_CLIENT_ID or REDDIT_CLIENT_SECRET");
+
+  const credentials = btoa(`${clientId}:${clientSecret}`);
+  const res = await fetch("https://www.reddit.com/api/v1/access_token", {
+    method: "POST",
+    headers: {
+      "Authorization": `Basic ${credentials}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": USER_AGENT,
+    },
+    body: "grant_type=client_credentials",
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Reddit OAuth failed (${res.status}): ${text}`);
+  }
+
+  const data = await res.json();
+  if (!data.access_token) throw new Error(`Reddit OAuth returned no token: ${JSON.stringify(data)}`);
+  return data.access_token;
+}
+
+async function fetchSubreddit(
+  sub: string,
+  query: string,
+  seen: Set<string>,
+  token: string
+): Promise<any[]> {
+  const url = `https://oauth.reddit.com/r/${sub}/search?q=${encodeURIComponent(query)}&restrict_sr=1&limit=25&sort=relevance&t=year`;
+  const res = await fetch(url, {
+    headers: { "Authorization": `Bearer ${token}`, "User-Agent": USER_AGENT },
+  });
   if (!res.ok) return [];
   const data = await res.json();
   const posts: any[] = [];
@@ -36,10 +69,15 @@ async function fetchSubreddit(sub: string, query: string, seen: Set<string>): Pr
   return posts;
 }
 
-async function fetchTopComments(post: any): Promise<{ body: string; score: number; author: string }[]> {
+async function fetchTopComments(
+  post: any,
+  token: string
+): Promise<{ body: string; score: number; author: string }[]> {
   try {
-    const url = `https://www.reddit.com${post.permalink}.json?limit=10&sort=top`;
-    const res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
+    const url = `https://oauth.reddit.com${post.permalink}?limit=10&sort=top`;
+    const res = await fetch(url, {
+      headers: { "Authorization": `Bearer ${token}`, "User-Agent": USER_AGENT },
+    });
     if (!res.ok) return [];
     const data = await res.json();
     const comments = data?.[1]?.data?.children ?? [];
@@ -75,11 +113,7 @@ function calculateGrowthVelocity(posts: any[]): number {
 
   // Normalize prior count to 30-day equivalent (it covers 60 days)
   const priorNormalized = priorCount / 2;
-
-  if (priorNormalized === 0) {
-    return recentCount > 0 ? 100 : 0;
-  }
-
+  if (priorNormalized === 0) return recentCount > 0 ? 100 : 0;
   return Math.round(((recentCount - priorNormalized) / priorNormalized) * 100);
 }
 
@@ -91,6 +125,7 @@ Deno.serve(async (req) => {
     if (!query) throw new Error("Missing query");
 
     const subs = subreddits || DEFAULT_SUBREDDITS;
+    const token = await getRedditToken();
     const allPosts: any[] = [];
     const seen = new Set<string>();
 
@@ -98,7 +133,7 @@ Deno.serve(async (req) => {
     for (let i = 0; i < subs.length; i += 3) {
       const batch = subs.slice(i, i + 3);
       const results = await Promise.all(
-        batch.map((sub: string) => fetchSubreddit(sub, query, seen).catch(() => []))
+        batch.map((sub: string) => fetchSubreddit(sub, query, seen, token).catch(() => []))
       );
       for (const posts of results) {
         allPosts.push(...posts);
@@ -111,8 +146,10 @@ Deno.serve(async (req) => {
 
     // Also search global Reddit
     try {
-      const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&limit=25&sort=relevance&t=year`;
-      const res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
+      const url = `https://oauth.reddit.com/search?q=${encodeURIComponent(query)}&limit=25&sort=relevance&t=year`;
+      const res = await fetch(url, {
+        headers: { "Authorization": `Bearer ${token}`, "User-Agent": USER_AGENT },
+      });
       if (res.ok) {
         const data = await res.json();
         for (const child of data?.data?.children ?? []) {
@@ -143,12 +180,11 @@ Deno.serve(async (req) => {
 
     // Fetch top comments for the 5 highest-scoring posts
     const top5 = allPosts.slice(0, 5);
-    const commentResults = await Promise.all(top5.map((post) => fetchTopComments(post)));
+    const commentResults = await Promise.all(top5.map((post) => fetchTopComments(post, token)));
     for (let i = 0; i < top5.length; i++) {
       top5[i].topComments = commentResults[i];
     }
 
-    // Calculate real growth velocity
     const growthVelocity = calculateGrowthVelocity(allPosts);
 
     return new Response(
