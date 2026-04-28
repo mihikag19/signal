@@ -165,6 +165,7 @@ export interface ValidationReport {
   sentimentAnalysis?: SentimentAnalysis;
   confidenceScore?: ConfidenceScore;
   dataCoverage?: DataCoverageReport;
+  rawVerdict?: "BUILD" | "MAYBE" | "SKIP";
 }
 
 // ── Edge function response types ─────────────────────────────────────────────
@@ -348,6 +349,24 @@ export interface GitHubStarsResponse {
   repos?: Array<{ name?: string; currentStars?: number; currentForks?: number; openIssues?: number; createdAt?: string; pushedAt?: string; starGrowthRate?: string; description?: string; language?: string; url?: string }>;
   meta?: { query?: string; totalRepos?: number };
   error?: string;
+}
+
+// Chat and history types
+export interface Message {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ReportSummary {
+  id: string;
+  query: string;
+  overallScore?: number;
+  attentionScore?: number;
+  vcScore?: number;
+  founderScore?: number;
+  verdict?: string;
+  sourcesUsed?: number;
+  createdAt: string;
 }
 
 export interface ClaudeAnalysis {

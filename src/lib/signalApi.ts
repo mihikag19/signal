@@ -29,9 +29,11 @@ import type {
   GitHubStarsResponse,
   DataCoverageReport,
   DataCoverageSource,
+  Message,
+  ReportSummary,
 } from "@/types";
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Core helpers ──────────────────────────────────────────────────────────────
 
 async function callEdgeFunction(name: string, body: Record<string, unknown>) {
   const { data, error } = await supabase.functions.invoke(name, { body });
@@ -74,7 +76,19 @@ function extract<T>(result: SafeResult<T>, fallback: T): T {
   return result.data;
 }
 
-// ── Fallbacks ────────────────────────────────────────────────────────────────
+function edgeFunctionUrl(name: string): string {
+  const base = import.meta.env.VITE_SUPABASE_URL as string;
+  return `${base}/functions/v1/${name}`;
+}
+
+function edgeFetchHeaders(): Record<string, string> {
+  return {
+    Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string}`,
+    "Content-Type": "application/json",
+  };
+}
+
+// ── Empty fallbacks ───────────────────────────────────────────────────────────
 
 const E_REDDIT: RedditResponse = { posts: [], meta: { totalPosts: 0, growthVelocity: 0 } };
 const E_HN: HNResponse = { stories: [], comments: [], meta: { totalStories: 0, totalComments: 0 } };
@@ -102,12 +116,24 @@ const E_NPM: NpmStatsResponse = { packages: [] };
 const E_PYPI: PypiStatsResponse = { packages: [] };
 const E_GHS: GitHubStarsResponse = { repos: [] };
 
-// ── Main ─────────────────────────────────────────────────────────────────────
+// ── Scraper orchestration ─────────────────────────────────────────────────────
 
-export async function validateIdea(ideaText: string): Promise<ValidationReport> {
-  const query = ideaText.trim();
+interface ScrapeAllResult {
+  extracted: {
+    reddit: RedditResponse; hn: HNResponse; ph: PHResponse; devto: DevToResponse;
+    ih: IHResponse; gh: GitHubResponse; so: SOResponse; trends: GoogleTrendsResponse;
+    ac: GoogleAutocompleteResponse; wiki: WikipediaViewsResponse; g2: G2ReviewsResponse;
+    chrome: ChromeWebStoreResponse; tp: TrustpilotResponse; appstore: AppStoreResponse;
+    youtube: YouTubeResponse; medium: MediumResponse; substack: SubstackResponse;
+    lobsters: LobstersResponse; lemmy: LemmyResponse; crunchbase: CrunchbaseResponse;
+    wellfound: WellfoundResponse; yc: YCCompaniesResponse; npm: NpmStatsResponse;
+    pypi: PypiStatsResponse; ghStars: GitHubStarsResponse;
+  };
+  dataCoverage: DataCoverageReport;
+  activePlatforms: string[];
+}
 
-  // Fire all scrapers in parallel — timeout each at 15s
+async function scrapeAll(query: string): Promise<ScrapeAllResult> {
   const [
     redditR, hnR, phR, devtoR, ihR, ghR, soR,
     trendsR, acR, wikiR,
@@ -116,7 +142,6 @@ export async function validateIdea(ideaText: string): Promise<ValidationReport> 
     cbR, wfR, ycR,
     npmR, pypiR, ghsR,
   ] = await Promise.all([
-    // Tier 1 — most reliable
     safe<RedditResponse>("scrape-reddit", { query }),
     safe<HNResponse>("scrape-hn", { query }),
     safe<PHResponse>("scrape-producthunt", { query }),
@@ -124,32 +149,26 @@ export async function validateIdea(ideaText: string): Promise<ValidationReport> 
     safe<IHResponse>("scrape-indiehackers", { query }),
     safe<GitHubResponse>("scrape-github", { query }),
     safe<SOResponse>("scrape-stackoverflow", { query }),
-    // Tier 2 — trend + search signals
     safe<GoogleTrendsResponse>("scrape-google-trends", { query }),
     safe<GoogleAutocompleteResponse>("scrape-google-autocomplete", { query }),
     safe<WikipediaViewsResponse>("scrape-wikipedia-views", { query }),
-    // Tier 2 — review platforms
     safe<G2ReviewsResponse>("scrape-g2-reviews", { query }),
     safe<ChromeWebStoreResponse>("scrape-chrome-webstore", { query }),
     safe<TrustpilotResponse>("scrape-trustpilot", { query }),
     safe<AppStoreResponse>("scrape-appstore", { query }),
-    // Tier 3 — content + community
     safe<YouTubeResponse>("scrape-youtube", { query }),
     safe<MediumResponse>("scrape-medium", { query }),
     safe<SubstackResponse>("scrape-substack", { query }),
     safe<LobstersResponse>("scrape-lobsters", { query }),
     safe<LemmyResponse>("scrape-lemmy", { query }),
-    // Tier 3 — startup ecosystem
     safe<CrunchbaseResponse>("scrape-crunchbase", { query }),
     safe<WellfoundResponse>("scrape-wellfound", { query }),
     safe<YCCompaniesResponse>("scrape-yc-companies", { query }),
-    // Tier 3 — developer signals
     safe<NpmStatsResponse>("scrape-npm-stats", { query }),
     safe<PypiStatsResponse>("scrape-pypi-stats", { query }),
     safe<GitHubStarsResponse>("scrape-github-stars-history", { query }),
   ]);
 
-  // Extract data with fallbacks
   const reddit = extract(redditR, E_REDDIT);
   const hn = extract(hnR, E_HN);
   const ph = extract(phR, E_PH);
@@ -176,7 +195,6 @@ export async function validateIdea(ideaText: string): Promise<ValidationReport> 
   const pypi = extract(pypiR, E_PYPI);
   const ghStars = extract(ghsR, E_GHS);
 
-  // Build coverage report
   const sourceEntries: DataCoverageSource[] = [
     makeSource("Reddit", redditR, countItems(reddit, "posts")),
     makeSource("Hacker News", hnR, countItems(hn, "stories", "comments")),
@@ -207,67 +225,236 @@ export async function validateIdea(ideaText: string): Promise<ValidationReport> 
 
   const totalItems = sourceEntries.reduce((acc, s) => acc + s.itemCount, 0);
   const successfulSources = sourceEntries.filter((s) => s.status === "success").length;
+  const dataCoverage: DataCoverageReport = { sources: sourceEntries, totalItems, totalSources: sourceEntries.length, successfulSources };
 
-  const dataCoverage: DataCoverageReport = {
-    sources: sourceEntries,
-    totalItems,
-    totalSources: sourceEntries.length,
-    successfulSources,
-  };
-
-  // Log summary
   const failed = sourceEntries.filter((s) => s.status === "failed").map((s) => s.name);
   const timedOut = sourceEntries.filter((s) => s.status === "timeout").map((s) => s.name);
-  if (failed.length) console.warn("[signal] Failed sources:", failed.join(", "));
+  if (failed.length) console.warn("[signal] Failed:", failed.join(", "));
   if (timedOut.length) console.warn("[signal] Timed out:", timedOut.join(", "));
   console.info(`[signal] Coverage: ${successfulSources}/${sourceEntries.length} sources, ${totalItems} items`);
 
-  // Build active platform list
-  const activePlatforms: string[] = sourceEntries
+  const activePlatforms = sourceEntries
     .filter((s) => s.status === "success" && s.itemCount > 0)
     .map((s) => s.name);
 
-  // Call analyze with everything
-  const analysis: ClaudeAnalysis = await callEdgeFunction("analyze", {
-    idea: ideaText,
-    // Wave 1
-    redditPosts: reddit.posts ?? [],
-    hnStories: hn.stories ?? [],
-    hnComments: hn.comments ?? [],
-    phPosts: ph.posts ?? [],
-    devtoArticles: devto.articles ?? [],
-    ihPosts: ih.posts ?? [],
-    githubRepos: gh.repos ?? [],
-    githubIssues: gh.issues ?? [],
-    soQuestions: so.questions ?? [],
-    // Wave 2
-    googleTrends: trends,
-    autocompleteSuggestions: ac.suggestions ?? [],
-    peopleAlsoAsk: ac.peopleAlsoAsk ?? [],
-    wikipediaArticles: wiki.articles ?? [],
-    g2Products: g2.products ?? [],
-    g2Complaints: g2.complaints ?? [],
-    chromeExtensions: chrome.extensions ?? [],
-    trustpilotCompanies: tp.companies ?? [],
-    appstoreApps: appstore.apps ?? [],
-    appstoreNegativeReviews: appstore.negativeReviews ?? [],
-    youtubeVideos: youtube.videos ?? [],
-    mediumArticles: medium.articles ?? [],
-    substackPosts: substack.posts ?? [],
-    lobstersStories: lobsters.stories ?? [],
-    lemmyPosts: lemmy.posts ?? [],
-    crunchbaseCompanies: crunchbase.companies ?? [],
-    wellfoundCompanies: wellfound.companies ?? [],
-    ycCompanies: yc.companies ?? [],
-    npmPackages: npm.packages ?? [],
-    pypiPackages: pypi.packages ?? [],
-    ghStarsRepos: ghStars.repos ?? [],
-  });
-
-  return mapToValidationReport(ideaText, analysis, reddit, hn, activePlatforms, dataCoverage);
+  return {
+    extracted: {
+      reddit, hn, ph, devto, ih, gh, so, trends, ac, wiki, g2, chrome, tp, appstore,
+      youtube, medium, substack, lobsters, lemmy, crunchbase, wellfound, yc, npm, pypi, ghStars,
+    },
+    dataCoverage,
+    activePlatforms,
+  };
 }
 
-// ── Mapper ───────────────────────────────────────────────────────────────────
+function buildAnalyzePayload(idea: string, e: ScrapeAllResult["extracted"]): Record<string, unknown> {
+  return {
+    idea,
+    redditPosts: e.reddit.posts ?? [],
+    hnStories: e.hn.stories ?? [],
+    hnComments: e.hn.comments ?? [],
+    phPosts: e.ph.posts ?? [],
+    devtoArticles: e.devto.articles ?? [],
+    ihPosts: e.ih.posts ?? [],
+    githubRepos: e.gh.repos ?? [],
+    githubIssues: e.gh.issues ?? [],
+    soQuestions: e.so.questions ?? [],
+    googleTrends: e.trends,
+    autocompleteSuggestions: e.ac.suggestions ?? [],
+    peopleAlsoAsk: e.ac.peopleAlsoAsk ?? [],
+    wikipediaArticles: e.wiki.articles ?? [],
+    g2Products: e.g2.products ?? [],
+    g2Complaints: e.g2.complaints ?? [],
+    chromeExtensions: e.chrome.extensions ?? [],
+    trustpilotCompanies: e.tp.companies ?? [],
+    appstoreApps: e.appstore.apps ?? [],
+    appstoreNegativeReviews: e.appstore.negativeReviews ?? [],
+    youtubeVideos: e.youtube.videos ?? [],
+    mediumArticles: e.medium.articles ?? [],
+    substackPosts: e.substack.posts ?? [],
+    lobstersStories: e.lobsters.stories ?? [],
+    lemmyPosts: e.lemmy.posts ?? [],
+    crunchbaseCompanies: e.crunchbase.companies ?? [],
+    wellfoundCompanies: e.wellfound.companies ?? [],
+    ycCompanies: e.yc.companies ?? [],
+    npmPackages: e.npm.packages ?? [],
+    pypiPackages: e.pypi.packages ?? [],
+    ghStarsRepos: e.ghStars.repos ?? [],
+  };
+}
+
+// ── Public: validate (non-streaming) ─────────────────────────────────────────
+
+export async function validateIdea(ideaText: string): Promise<ValidationReport> {
+  const query = ideaText.trim();
+  const { extracted, dataCoverage, activePlatforms } = await scrapeAll(query);
+
+  const analysis: ClaudeAnalysis = await callEdgeFunction("analyze", buildAnalyzePayload(ideaText, extracted));
+  const report = mapToValidationReport(ideaText, analysis, extracted.reddit, extracted.hn, activePlatforms, dataCoverage);
+
+  saveReport(report).catch((e) => console.warn("[signal] Auto-save failed:", e));
+  return report;
+}
+
+// ── Public: streamAnalysis ────────────────────────────────────────────────────
+
+export async function streamAnalysis(
+  ideaText: string,
+  callbacks: {
+    onStatus: (message: string) => void;
+    onScoresReady: (scores: object) => void;
+    onQuote: (quote: object) => void;
+    onComplete: (fullReport: ValidationReport) => void;
+    onError: (error: string) => void;
+  }
+): Promise<void> {
+  callbacks.onStatus("Scanning 25 data sources...");
+
+  let scrapeResult: ScrapeAllResult;
+  try {
+    scrapeResult = await scrapeAll(ideaText.trim());
+  } catch (e) {
+    callbacks.onError(String(e));
+    return;
+  }
+
+  const { extracted, dataCoverage, activePlatforms } = scrapeResult;
+  callbacks.onStatus(`Collected ${dataCoverage.totalItems} items from ${dataCoverage.successfulSources} sources. Running AI analysis...`);
+
+  try {
+    const response = await fetch(edgeFunctionUrl("analyze"), {
+      method: "POST",
+      headers: edgeFetchHeaders(),
+      body: JSON.stringify({ ...buildAnalyzePayload(ideaText, extracted), stream: true }),
+    });
+
+    if (!response.ok) throw new Error(`analyze: HTTP ${response.status}`);
+
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const text = decoder.decode(value, { stream: true });
+      for (const line of text.split("\n")) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const event = JSON.parse(line.slice(6));
+          switch (event.type) {
+            case "status":
+              callbacks.onStatus(event.message);
+              break;
+            case "scores":
+              callbacks.onScoresReady(event.scores);
+              break;
+            case "quote":
+              callbacks.onQuote(event.quote);
+              break;
+            case "complete": {
+              const report = mapToValidationReport(
+                ideaText,
+                event.analysis as ClaudeAnalysis,
+                extracted.reddit,
+                extracted.hn,
+                activePlatforms,
+                dataCoverage
+              );
+              saveReport(report).catch((e) => console.warn("[signal] Auto-save failed:", e));
+              callbacks.onComplete(report);
+              break;
+            }
+            case "error":
+              callbacks.onError(event.message);
+              break;
+          }
+        } catch { /* skip malformed SSE lines */ }
+      }
+    }
+  } catch (e) {
+    callbacks.onError(String(e));
+  }
+}
+
+// ── Public: history ───────────────────────────────────────────────────────────
+
+export async function saveReport(report: ValidationReport): Promise<string> {
+  const data = await callEdgeFunction("save-report", { report });
+  return data.id as string;
+}
+
+export async function listReports(limit = 20, offset = 0): Promise<ReportSummary[]> {
+  const data = await callEdgeFunction("list-reports", { limit, offset });
+  return (data.reports ?? []) as ReportSummary[];
+}
+
+export async function getReport(id: string): Promise<ValidationReport> {
+  const data = await callEdgeFunction("get-report", { id });
+  return data.report as ValidationReport;
+}
+
+// ── Public: PDF ───────────────────────────────────────────────────────────────
+
+export async function generatePDF(reportOrId: ValidationReport | string): Promise<void> {
+  const body = typeof reportOrId === "string" ? { reportId: reportOrId } : { report: reportOrId };
+
+  const response = await fetch(edgeFunctionUrl("generate-pdf"), {
+    method: "POST",
+    headers: edgeFetchHeaders(),
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) throw new Error(`PDF generation failed: ${response.status}`);
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `signal-report-${Date.now()}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ── Public: chat ──────────────────────────────────────────────────────────────
+
+export async function chatAboutReport(
+  reportId: string,
+  message: string,
+  history: Message[],
+  onChunk: (chunk: string) => void,
+  onComplete: (fullText: string) => void
+): Promise<void> {
+  const response = await fetch(edgeFunctionUrl("chat"), {
+    method: "POST",
+    headers: edgeFetchHeaders(),
+    body: JSON.stringify({ reportId, message, history }),
+  });
+
+  if (!response.ok) throw new Error(`Chat failed: ${response.status}`);
+
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const text = decoder.decode(value, { stream: true });
+    for (const line of text.split("\n")) {
+      if (!line.startsWith("data: ")) continue;
+      try {
+        const event = JSON.parse(line.slice(6));
+        if (event.type === "chunk") onChunk(event.text as string);
+        else if (event.type === "complete") onComplete(event.text as string);
+      } catch { /* skip */ }
+    }
+  }
+}
+
+// ── Mapper ────────────────────────────────────────────────────────────────────
 
 function mapToValidationReport(
   ideaText: string,
@@ -308,11 +495,11 @@ function mapToValidationReport(
   const competitors = ai.competitors ?? [];
   const competitorNames = competitors.map((c) => c.name ?? "Unknown");
 
-  const verdict = ai.verdict ?? "MAYBE";
+  const rawVerdict = (ai.verdict as "BUILD" | "MAYBE" | "SKIP") ?? "MAYBE";
   const verdictText =
-    verdict === "BUILD"
+    rawVerdict === "BUILD"
       ? "Strong demand signal detected. Build immediately."
-      : verdict === "SKIP"
+      : rawVerdict === "SKIP"
       ? "Weak signal. Needs significant pivoting or more research."
       : "Moderate signal. Proceed with caution and validate further.";
 
@@ -359,6 +546,7 @@ function mapToValidationReport(
     ideaTitle: title,
     ideaDescription: ideaText,
     overallScore: overall,
+    rawVerdict,
     founderSignal: {
       score: Math.round((fs?.overall ?? 5) * 10),
       summary:
@@ -477,14 +665,13 @@ function mapToValidationReport(
         (fs?.urgency ?? 0) >= 6, overall >= 70,
       ].filter(Boolean).length,
       total: 7,
-      recommendation: verdict === "BUILD" ? "Strong go. Start building." : verdict === "SKIP" ? "Needs more research." : "Promising. Proceed to user interviews.",
+      recommendation: rawVerdict === "BUILD" ? "Strong go. Start building." : rawVerdict === "SKIP" ? "Needs more research." : "Promising. Proceed to user interviews.",
       detail: ai.recommendation ?? "Complete analysis based on real community data.",
     },
     nextSteps: (ai.nextSteps ?? ["Run Mom Test interviews", "Test willingness to pay", "Build minimal prototype"]).map(
       (step, i) => ({ emoji: emojis[i] || "📋", title: step.slice(0, 40), detail: step })
     ),
     recommendation: ai.recommendation ?? "Analysis complete.",
-    // Extended fields
     attentionScore: ai.attentionScore,
     competitorMap: ai.competitorMap,
     revenueModel: ai.revenueModel,
