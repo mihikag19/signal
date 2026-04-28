@@ -1,17 +1,13 @@
 import { motion } from "framer-motion";
-import { BookOpen, CheckCircle, AlertCircle, XCircle } from "lucide-react";
-import type { ValidationReport } from "@/lib/mockData";
+import type { ValidationReport } from "@/types";
 
-function RuleIcon({ status }: { status: "pass" | "partial" | "fail" }) {
-  if (status === "pass") return <CheckCircle className="w-5 h-5 text-success shrink-0" />;
-  if (status === "partial") return <AlertCircle className="w-5 h-5 text-warning shrink-0" />;
-  return <XCircle className="w-5 h-5 text-destructive shrink-0" />;
-}
-
-function statusBg(status: "pass" | "partial" | "fail") {
-  if (status === "pass") return "bg-success/5";
-  if (status === "partial") return "bg-warning/5";
-  return "bg-destructive/5";
+function StatusDot({ status }: { status: "pass" | "partial" | "fail" }) {
+  const colors = {
+    pass: "bg-success",
+    partial: "bg-warning",
+    fail: "bg-destructive",
+  };
+  return <span className={`w-1.5 h-1.5 rounded-full ${colors[status]} shrink-0 mt-1.5`} />;
 }
 
 interface Props {
@@ -21,25 +17,27 @@ interface Props {
 export function MomTestAnalysis({ momTest }: Props) {
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        We applied Rob Fitzpatrick's Mom Test framework to real online conversations. These aren't people responding to a pitch — they're expressing pain unprompted.
+      <p className="text-sm text-muted-foreground leading-relaxed">
+        Applied Rob Fitzpatrick's Mom Test framework to real online conversations.
+        These are people expressing pain unprompted — not responding to a pitch.
       </p>
 
-      <div className="flex items-center gap-3 mb-4">
-        <BookOpen className="w-5 h-5 text-primary" />
-        <span className="text-foreground font-semibold">Mom Test Score: {momTest.score}/{momTest.maxScore} rules passed</span>
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-sm font-medium text-foreground">
+          Mom Test Score: {momTest.score}/{momTest.maxScore} rules passed
+        </span>
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         {momTest.rules.map((rule, i) => (
           <motion.div
             key={rule.rule}
-            initial={{ opacity: 0, x: -20 }}
+            initial={{ opacity: 0, x: -8 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: i * 0.1, duration: 0.3 }}
-            className={`flex items-start gap-3 p-3 rounded-lg ${statusBg(rule.status)}`}
+            transition={{ delay: i * 0.06, duration: 0.25 }}
+            className="flex items-start gap-2.5 py-2.5 px-3 rounded-md bg-secondary/50"
           >
-            <RuleIcon status={rule.status} />
+            <StatusDot status={rule.status} />
             <div>
               <p className="text-sm font-medium text-foreground">{rule.rule}</p>
               <p className="text-xs text-muted-foreground mt-0.5">{rule.evidence}</p>
@@ -48,9 +46,9 @@ export function MomTestAnalysis({ momTest }: Props) {
         ))}
       </div>
 
-      <div className="glass-card gradient-border-left p-4 mt-4">
-        <p className="text-xs uppercase tracking-widest text-muted-foreground mb-1">Mom Test Verdict</p>
-        <p className="text-sm text-foreground/90">{momTest.verdict}</p>
+      <div className="surface-card border-l-2 border-foreground/20 p-4 mt-4">
+        <p className="section-label mb-1">Verdict</p>
+        <p className="text-sm text-foreground/80 leading-relaxed">{momTest.verdict}</p>
       </div>
     </div>
   );

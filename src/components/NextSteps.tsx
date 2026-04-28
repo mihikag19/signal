@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import type { NextStep } from "@/lib/mockData";
+import type { NextStep } from "@/types";
 
 interface Props {
   steps: NextStep[];
@@ -7,19 +7,21 @@ interface Props {
 
 export function NextStepsSection({ steps }: Props) {
   return (
-    <div className="space-y-4">
+    <div className="space-y-2.5">
       {steps.map((step, i) => (
         <motion.div
           key={step.title}
-          initial={{ opacity: 0, y: 15 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: i * 0.12, duration: 0.4 }}
-          className="glass-card p-5"
+          transition={{ delay: i * 0.08, duration: 0.3 }}
+          className="surface-card p-4"
         >
           <div className="flex items-start gap-3">
-            <span className="text-2xl">{step.emoji}</span>
+            <span className="font-mono text-xs text-muted-foreground/50 mt-0.5 w-5 shrink-0">
+              {String(i + 1).padStart(2, "0")}
+            </span>
             <div>
-              <p className="text-base font-semibold text-foreground">{step.title}</p>
+              <p className="text-sm font-medium text-foreground">{step.title}</p>
               <p className="text-sm text-muted-foreground mt-1 leading-relaxed">{step.detail}</p>
             </div>
           </div>

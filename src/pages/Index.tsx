@@ -1,129 +1,126 @@
 import { useState, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { SignalLogo } from "@/components/SignalLogo";
-import { ScanningAnimation } from "@/components/ScanningAnimation";
 import { motion } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 
 const exampleChips = [
-  { emoji: "🏥", label: "AI patient intake automation" },
-  { emoji: "🎨", label: "Creator content repurposing tool" },
-  { emoji: "🔮", label: "This tool — Signal (meta)" },
+  "AI patient intake automation",
+  "Creator content repurposing tool",
+  "Campus parking availability app",
 ];
 
 const Index = () => {
   const navigate = useNavigate();
-  const [scanning, setScanning] = useState(false);
-  const [pendingIdea, setPendingIdea] = useState("");
   const [ideaText, setIdeaText] = useState("");
 
-  const handleValidate = useCallback((idea: string) => {
-    if (!idea.trim()) return;
-    setPendingIdea(idea.trim());
-    setScanning(true);
-  }, []);
-
-  const handleScanComplete = useCallback(() => {
-    navigate(`/validate?idea=${encodeURIComponent(pendingIdea)}`);
-  }, [navigate, pendingIdea]);
-
-  if (scanning) {
-    return <ScanningAnimation ideaText={pendingIdea} onComplete={handleScanComplete} />;
-  }
+  const handleValidate = useCallback(
+    (idea: string) => {
+      if (!idea.trim()) return;
+      navigate(`/validate?idea=${encodeURIComponent(idea.trim())}`);
+    },
+    [navigate]
+  );
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-background px-4 overflow-hidden">
-      {/* Background gradient orbs */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute top-1/4 -left-32 w-[500px] h-[500px] rounded-full bg-primary/5 blur-[120px]" />
-        <div className="absolute bottom-1/4 -right-32 w-[400px] h-[400px] rounded-full bg-accent/5 blur-[120px]" />
-      </div>
-
-      <div className="relative w-full max-w-2xl text-center">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="flex justify-center mb-6"
-        >
-          <SignalLogo size="lg" />
-        </motion.div>
-
-        <motion.p
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1, duration: 0.5 }}
-          className="text-foreground text-xl font-semibold mb-2"
-        >
-          Validate before you build.
-        </motion.p>
-
-        <motion.p
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15, duration: 0.5 }}
-          className="text-muted-foreground text-sm mb-10 max-w-lg mx-auto"
-        >
-          Input your startup idea. Get real demand signals, quantitative scoring, and a strategic validation report in seconds.
-        </motion.p>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2, duration: 0.5 }}
-        >
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleValidate(ideaText);
-            }}
+    <div className="relative flex min-h-screen flex-col bg-background">
+      {/* Nav */}
+      <nav className="flex items-center justify-between px-6 py-5 max-w-3xl mx-auto w-full">
+        <SignalLogo size="sm" />
+        <div className="flex items-center gap-5">
+          <Link
+            to="/compare"
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
-            <textarea
-              value={ideaText}
-              onChange={(e) => setIdeaText(e.target.value)}
-              rows={4}
-              placeholder={'Describe your startup idea in 1-3 sentences...\ne.g., "An AI tool that scans online communities to find real demand signals for startup ideas, helping founders validate before they build and giving VCs proof of market demand."'}
-              className="w-full bg-white/5 text-foreground placeholder:text-muted-foreground rounded-xl px-5 py-4 text-base outline-none border border-transparent focus:ring-2 focus:ring-primary transition-all duration-200 resize-none"
-            />
-            <button
-              type="submit"
-              disabled={!ideaText.trim()}
-              className="w-full mt-3 gradient-button py-3.5 text-base font-semibold flex items-center justify-center gap-2 rounded-xl shimmer-button disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Validate This Idea
-              <ArrowRight className="w-5 h-5" />
-            </button>
-          </form>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3, duration: 0.5 }}
-          className="flex flex-wrap justify-center gap-2 mt-6"
-        >
-          {exampleChips.map((chip) => (
-            <button
-              key={chip.label}
-              onClick={() => handleValidate(chip.label)}
-              className="px-4 py-1.5 rounded-full text-sm border border-secondary bg-secondary/50 text-secondary-foreground hover:border-primary/50 hover:bg-primary/10 transition-all duration-200 cursor-pointer"
-            >
-              {chip.emoji} {chip.label}
-            </button>
-          ))}
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5, duration: 0.5 }}
-          className="mt-16 text-sm text-muted-foreground"
-        >
-          Already validated ideas?{" "}
-          <Link to="/compare" className="text-primary hover:underline">
-            Compare them →
+            Compare
           </Link>
-        </motion.div>
+          <Link
+            to="/teacher"
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Teacher
+          </Link>
+        </div>
+      </nav>
+
+      {/* Hero */}
+      <div className="flex-1 flex items-center justify-center px-6 pb-24">
+        <div className="w-full max-w-xl">
+          <motion.h1
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="text-4xl font-semibold tracking-tight text-foreground text-center leading-tight"
+          >
+            Validate before you build.
+          </motion.h1>
+
+          <motion.p
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.08, duration: 0.5 }}
+            className="text-muted-foreground text-base mt-3 text-center max-w-md mx-auto"
+          >
+            Describe your startup idea. Get real demand signals, scoring, and a
+            strategic validation report.
+          </motion.p>
+
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.16, duration: 0.5 }}
+            className="mt-8"
+          >
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleValidate(ideaText);
+              }}
+            >
+              <textarea
+                value={ideaText}
+                onChange={(e) => setIdeaText(e.target.value)}
+                rows={3}
+                placeholder="Describe your startup idea in 1–3 sentences..."
+                className="w-full bg-secondary/60 text-foreground placeholder:text-muted-foreground/60 rounded-lg px-4 py-3.5 text-base outline-none border border-border focus:border-foreground/30 focus:ring-1 focus:ring-foreground/10 transition-all duration-200 resize-none"
+              />
+              <button
+                type="submit"
+                disabled={!ideaText.trim()}
+                className="w-full mt-2.5 btn-primary py-3 text-sm flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                Validate this idea
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </form>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.3, duration: 0.5 }}
+            className="flex flex-wrap justify-center gap-2 mt-5"
+          >
+            {exampleChips.map((chip) => (
+              <button
+                key={chip}
+                onClick={() => handleValidate(chip)}
+                className="px-3.5 py-1.5 rounded-full text-xs border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-all duration-200 cursor-pointer"
+              >
+                {chip}
+              </button>
+            ))}
+          </motion.div>
+
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.5, duration: 0.5 }}
+            className="mt-12 text-center text-xs text-muted-foreground/60"
+          >
+            Powered by real-time data from Reddit and Hacker News
+          </motion.p>
+        </div>
       </div>
     </div>
   );

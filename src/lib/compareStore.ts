@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ValidationReport } from "./mockData";
+import type { ValidationReport } from "@/types";
 import { preloadedCompareIdeas } from "./mockData";
 
 interface CompareStore {

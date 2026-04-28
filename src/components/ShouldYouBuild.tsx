@@ -1,17 +1,13 @@
 import { motion } from "framer-motion";
-import { CheckCircle, AlertTriangle, XCircle } from "lucide-react";
-import type { ChecklistItem, ValidationReport } from "@/lib/mockData";
+import type { ChecklistItem, ValidationReport } from "@/types";
 
-function ItemIcon({ status }: { status: string }) {
-  if (status === "pass") return <CheckCircle className="w-5 h-5 text-success shrink-0" />;
-  if (status === "warning") return <AlertTriangle className="w-5 h-5 text-warning shrink-0" />;
-  return <XCircle className="w-5 h-5 text-destructive shrink-0" />;
-}
-
-function itemBg(status: string) {
-  if (status === "pass") return "bg-success/5 border-success/10";
-  if (status === "warning") return "bg-warning/5 border-warning/10";
-  return "bg-destructive/5 border-destructive/10";
+function StatusDot({ status }: { status: string }) {
+  const colors: Record<string, string> = {
+    pass: "bg-success",
+    warning: "bg-warning",
+    fail: "bg-destructive",
+  };
+  return <span className={`w-2 h-2 rounded-full ${colors[status] || "bg-muted"} shrink-0 mt-1`} />;
 }
 
 interface Props {
@@ -21,32 +17,34 @@ interface Props {
 
 export function ShouldYouBuild({ checklist, verdict }: Props) {
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {checklist.map((item, i) => (
         <motion.div
           key={item.label}
-          initial={{ opacity: 0, x: -20 }}
+          initial={{ opacity: 0, x: -8 }}
           animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: i * 0.1, duration: 0.3 }}
-          className={`flex items-start gap-3 p-3 rounded-lg border ${itemBg(item.status)}`}
+          transition={{ delay: i * 0.06, duration: 0.25 }}
+          className="flex items-start gap-2.5 py-2.5 px-3 rounded-md bg-secondary/40"
         >
-          <ItemIcon status={item.status} />
+          <StatusDot status={item.status} />
           <div>
-            <p className="text-sm font-semibold text-foreground">{item.label}</p>
+            <p className="text-sm font-medium text-foreground">{item.label}</p>
             <p className="text-xs text-muted-foreground">{item.detail}</p>
           </div>
         </motion.div>
       ))}
 
       <motion.div
-        initial={{ opacity: 0, y: 10 }}
+        initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: checklist.length * 0.1 + 0.1, duration: 0.4 }}
-        className="glass-card gradient-border-left p-5 mt-4"
+        transition={{ delay: checklist.length * 0.06 + 0.1, duration: 0.3 }}
+        className="surface-card border-l-2 border-foreground/20 p-4 mt-4"
       >
-        <p className="text-xs uppercase tracking-widest text-muted-foreground mb-1">Verdict — {verdict.greenCount}/{verdict.total} signals green</p>
-        <p className="text-lg font-bold text-foreground">{verdict.recommendation}</p>
-        <p className="text-sm text-muted-foreground mt-1">{verdict.detail}</p>
+        <p className="section-label mb-1">
+          Verdict — {verdict.greenCount}/{verdict.total} signals green
+        </p>
+        <p className="text-base font-medium text-foreground">{verdict.recommendation}</p>
+        <p className="text-sm text-muted-foreground mt-1 leading-relaxed">{verdict.detail}</p>
       </motion.div>
     </div>
   );
